@@ -50,7 +50,7 @@
         }
         
         .sidebar-header .logo {
-            font-size: 1.5rem;
+            font-size: 1.2rem;
             font-weight: 700;
             color: white;
             margin-bottom: 5px;
@@ -59,11 +59,11 @@
         .sidebar-header .dev-badge {
             background: linear-gradient(135deg, var(--dev-primary), var(--dev-secondary));
             color: white;
-            padding: 4px 12px;
-            border-radius: 12px;
-            font-size: 0.7rem;
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 0.6rem;
             font-weight: 600;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
             text-transform: uppercase;
         }
         
@@ -72,22 +72,23 @@
         }
         
         .menu-section {
-            padding: 10px 20px;
+            padding: 8px 16px;
             color: rgba(255,255,255,0.4);
-            font-size: 0.7rem;
+            font-size: 0.65rem;
             font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 1px;
+            letter-spacing: 0.5px;
         }
         
         .sidebar-menu a {
             display: flex;
             align-items: center;
-            padding: 12px 20px;
+            padding: 10px 16px;
             color: rgba(255,255,255,0.7);
             text-decoration: none;
             transition: all 0.3s;
             border-left: 3px solid transparent;
+            font-size: 0.875rem;
         }
         
         .sidebar-menu a:hover {
@@ -103,9 +104,9 @@
         }
         
         .sidebar-menu a i {
-            width: 24px;
-            margin-right: 12px;
-            font-size: 1.1rem;
+            width: 18px;
+            margin-right: 10px;
+            font-size: 0.95rem;
         }
         
         /* Main Content */
@@ -152,15 +153,16 @@
         }
         
         .user-avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
             background: linear-gradient(135deg, var(--dev-primary), var(--dev-secondary));
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: 600;
+            font-size: 0.8rem;
         }
         
         .user-info {
@@ -169,12 +171,12 @@
         
         .user-info .name {
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             color: var(--dev-dark);
         }
         
         .user-info .role {
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             color: #666;
         }
         
@@ -210,14 +212,14 @@
         }
         
         .stat-icon {
-            width: 50px;
-            height: 50px;
-            border-radius: 12px;
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.5rem;
-            margin-bottom: 15px;
+            font-size: 1.2rem;
+            margin-bottom: 12px;
         }
         
         .stat-users .stat-icon { background: rgba(111, 66, 193, 0.15); color: var(--dev-primary); }
@@ -226,7 +228,7 @@
         .stat-menus .stat-icon { background: rgba(245, 158, 11, 0.15); color: var(--dev-warning); }
         
         .stat-info h3 {
-            font-size: 1.8rem;
+            font-size: 1.5rem;
             font-weight: 700;
             margin-bottom: 5px;
             color: var(--dev-dark);
@@ -235,7 +237,7 @@
         .stat-info p {
             color: #666;
             margin: 0;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
         }
         
         .stat-link {
@@ -280,18 +282,19 @@
         .table th {
             background: #f8f9fa;
             font-weight: 600;
-            font-size: 0.85rem;
+            font-size: 0.75rem;
             color: #666;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
-            padding: 15px 20px;
+            letter-spacing: 0.3px;
+            padding: 10px 12px;
             border: none;
         }
         
         .table td {
-            padding: 15px 20px;
+            padding: 10px 12px;
             vertical-align: middle;
             border-color: #f0f0f0;
+            font-size: 0.85rem;
         }
         
         /* Quick Actions */
@@ -458,6 +461,9 @@
             <div class="menu-section">Management</div>
             <a href="users.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'users.php' ? 'active' : ''; ?>">
                 <i class="bi bi-people"></i>Users
+            </a>
+            <a href="business-users.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'business-users.php' ? 'active' : ''; ?>">
+                <i class="bi bi-person-badge"></i>Business Users
             </a>
             <a href="businesses.php" class="<?php echo basename($_SERVER['PHP_SELF']) == 'businesses.php' ? 'active' : ''; ?>">
                 <i class="bi bi-building"></i>Businesses

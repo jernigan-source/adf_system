@@ -59,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 
                 if (!$existingAssign) {
                     // Create assignment
-                    $stmt = $pdo->prepare("INSERT INTO user_business_assignment (user_id, business_id, is_active) VALUES (?, ?, 1)");
+                    $stmt = $pdo->prepare("INSERT INTO user_business_assignment (user_id, business_id) VALUES (?, ?)");
                     $stmt->execute([$assignUserId, $assignBusinessId]);
                 }
                 
@@ -191,7 +191,7 @@ if ($businessId) {
             FROM users u
             JOIN roles r ON u.role_id = r.id
             JOIN user_business_assignment uba ON u.id = uba.user_id
-            WHERE uba.business_id = ? AND uba.is_active = 1
+            WHERE uba.business_id = ?
             ORDER BY u.full_name
         ");
         $userStmt->execute([$businessId, $businessId]);

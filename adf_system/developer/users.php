@@ -275,12 +275,12 @@ require_once __DIR__ . '/includes/header.php';
                     <tr>
                         <td>
                             <div class="d-flex align-items-center">
-                                <div class="user-avatar me-3" style="width:36px;height:36px;font-size:0.9rem;">
+                                <div class="user-avatar me-2" style="width:30px;height:30px;font-size:0.75rem;">
                                     <?php echo strtoupper(substr($u['full_name'], 0, 1)); ?>
                                 </div>
                                 <div>
-                                    <strong><?php echo htmlspecialchars($u['full_name']); ?></strong>
-                                    <br><small class="text-muted">@<?php echo htmlspecialchars($u['username']); ?></small>
+                                    <strong style="font-size:0.85rem;"><?php echo htmlspecialchars($u['full_name']); ?></strong>
+                                    <br><small class="text-muted" style="font-size:0.7rem;">@<?php echo htmlspecialchars($u['username']); ?></small>
                                 </div>
                             </div>
                         </td>
@@ -314,16 +314,16 @@ require_once __DIR__ . '/includes/header.php';
                             <?php echo $u['last_login'] ? date('M d, Y H:i', strtotime($u['last_login'])) : '<span class="text-muted">Never</span>'; ?>
                         </td>
                         <td>
-                            <a href="?action=edit&id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-primary" title="Edit">
-                                <i class="bi bi-pencil"></i>
+                            <a href="?action=edit&id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-primary px-2 py-1" title="Edit">
+                                <i class="bi bi-pencil" style="font-size:0.8rem;"></i>
                             </a>
-                            <a href="user-business.php?user_id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-info" title="Assign Business">
-                                <i class="bi bi-building"></i>
+                            <a href="user-business.php?user_id=<?php echo $u['id']; ?>" class="btn btn-sm btn-outline-info px-2 py-1" title="Assign Business">
+                                <i class="bi bi-building" style="font-size:0.8rem;"></i>
                             </a>
                             <?php if ($u['id'] != $user['id']): ?>
                             <button onclick="confirmDelete('?action=delete&id=<?php echo $u['id']; ?>', '<?php echo addslashes($u['full_name']); ?>')" 
-                                    class="btn btn-sm btn-outline-danger" title="Delete">
-                                <i class="bi bi-trash"></i>
+                                    class="btn btn-sm btn-outline-danger px-2 py-1" title="Delete">
+                                <i class="bi bi-trash" style="font-size:0.8rem;"></i>
                             </button>
                             <?php endif; ?>
                         </td>

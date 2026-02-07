@@ -337,13 +337,14 @@ require_once __DIR__ . '/includes/header.php';
                         <th>Menus</th>
                         <th>Users</th>
                         <th>Status</th>
+                        <th>Staff Login Link</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($businesses)): ?>
                     <tr>
-                        <td colspan="8" class="text-center py-5 text-muted">
+                        <td colspan="9" class="text-center py-5 text-muted">
                             <i class="bi bi-building fs-1 d-block mb-2"></i>
                             No businesses found. <a href="?action=add">Create one</a>
                         </td>
@@ -376,6 +377,27 @@ require_once __DIR__ . '/includes/header.php';
                             <?php endif; ?>
                         </td>
                         <td>
+                            <?php 
+                            // Map business_code to URL slug
+                            $codeToSlug = [
+                                'BENSCAFE' => 'bens-cafe',
+                                'NARAYANAHOTEL' => 'narayana-hotel'
+                            ];
+                            $businessSlug = $codeToSlug[$biz['business_code']] ?? strtolower(str_replace('_', '-', $biz['business_code']));
+                            $staffLoginUrl = BASE_URL . '/login.php?biz=' . $businessSlug;
+                            ?>
+                            <div class="input-group input-group-sm" style="max-width: 350px;">
+                                <input type="text" class="form-control form-control-sm" value="<?php echo htmlspecialchars($staffLoginUrl); ?>" readonly id="bizLoginLink<?php echo $biz['id']; ?>" style="font-size: 0.75rem;">
+                                <button class="btn btn-outline-secondary btn-sm" type="button" onclick="copyBizLoginLink(<?php echo $biz['id']; ?>)" title="Copy Link">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </td>
+                        <td>
+                            <a href="../developer-access.php?dev_access=<?php echo base64_encode($biz['database_name']); ?>" 
+                               class="btn btn-sm btn-success" title="Open Business (Developer Access)" target="_blank">
+                                <i class="bi bi-box-arrow-up-right"></i> Open
+                            </a>
                             <a href="?action=edit&id=<?php echo $biz['id']; ?>" class="btn btn-sm btn-outline-primary" title="Edit">
                                 <i class="bi bi-pencil"></i>
                             </a>
@@ -396,5 +418,31 @@ require_once __DIR__ . '/includes/header.php';
     </div>
     <?php endif; ?>
 </div>
+
+<script>
+function copyBizLoginLink(bizId) {
+    const input = document.getElementById('bizLoginLink' + bizId);
+    input.select();
+    input.setSelectionRange(0, 99999); // For mobile devices
+    
+    // Copy to clipboard
+    navigator.clipboard.writeText(input.value).then(function() {
+        // Show success feedback
+        const btn = event.target.closest('button');
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check2"></i>';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-success');
+        
+        setTimeout(function() {
+            btn.innerHTML = originalHTML;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-secondary');
+        }, 2000);
+    }).catch(function(err) {
+        alert('Failed to copy: ' + err);
+    });
+}
+</script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

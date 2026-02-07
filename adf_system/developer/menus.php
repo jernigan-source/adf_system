@@ -38,10 +38,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($formAction === 'create' || $formAction === 'update') {
         $menuCode = strtolower(trim($_POST['menu_code'] ?? ''));
         $menuName = trim($_POST['menu_name'] ?? '');
-        $menuPath = trim($_POST['menu_path'] ?? '');
+        $menuUrl = trim($_POST['menu_url'] ?? '');
         $menuIcon = trim($_POST['menu_icon'] ?? 'bi bi-circle');
         $menuOrder = (int)($_POST['menu_order'] ?? 0);
-        $parentId = !empty($_POST['parent_id']) ? (int)$_POST['parent_id'] : null;
         $description = trim($_POST['description'] ?? '');
         $isActive = isset($_POST['is_active']) ? 1 : 0;
         
@@ -58,10 +57,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $error = 'Menu code already exists';
                     } else {
                         $stmt = $pdo->prepare("
-                            INSERT INTO menu_items (menu_code, menu_name, menu_path, menu_icon, menu_order, parent_id, description, is_active)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            INSERT INTO menu_items (menu_code, menu_name, menu_url, menu_icon, menu_order, description, is_active)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
                         ");
-                        $stmt->execute([$menuCode, $menuName, $menuPath, $menuIcon, $menuOrder, $parentId, $description, $isActive]);
+                        $stmt->execute([$menuCode, $menuName, $menuUrl, $menuIcon, $menuOrder, $description, $isActive]);
                         
                         $auth->logAction('create_menu', 'menu_items', $pdo->lastInsertId(), null, ['name' => $menuName]);
                         $_SESSION['success_message'] = 'Menu item created successfully!';
@@ -73,10 +72,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $updateId = (int)$_POST['menu_id'];
                     
                     $stmt = $pdo->prepare("
-                        UPDATE menu_items SET menu_code = ?, menu_name = ?, menu_path = ?, menu_icon = ?, menu_order = ?, parent_id = ?, description = ?, is_active = ?
+                        UPDATE menu_items SET menu_code = ?, menu_name = ?, menu_url = ?, menu_icon = ?, menu_order = ?, description = ?, is_active = ?
                         WHERE id = ?
                     ");
-                    $stmt->execute([$menuCode, $menuName, $menuPath, $menuIcon, $menuOrder, $parentId, $description, $isActive, $updateId]);
+                    $stmt->execute([$menuCode, $menuName, $menuUrl, $menuIcon, $menuOrder, $description, $isActive, $updateId]);
                     
                     $auth->logAction('update_menu', 'menu_items', $updateId, null, ['name' => $menuName]);
                     $_SESSION['success_message'] = 'Menu item updated successfully!';
@@ -109,22 +108,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // Handle delete
 if ($action === 'delete' && $editId) {
     try {
-        // Check if menu has children
-        $childCheck = $pdo->prepare("SELECT COUNT(*) FROM menu_items WHERE parent_id = ?");
-        $childCheck->execute([$editId]);
-        if ($childCheck->fetchColumn() > 0) {
-            $_SESSION['error_message'] = 'Cannot delete: Menu has sub-items. Delete children first.';
-        } else {
-            // Get menu info
-            $menuStmt = $pdo->prepare("SELECT * FROM menu_items WHERE id = ?");
-            $menuStmt->execute([$editId]);
-            $menuToDelete = $menuStmt->fetch(PDO::FETCH_ASSOC);
-            
-            if ($menuToDelete) {
-                $pdo->prepare("DELETE FROM menu_items WHERE id = ?")->execute([$editId]);
-                $auth->logAction('delete_menu', 'menu_items', $editId, $menuToDelete);
-                $_SESSION['success_message'] = 'Menu item deleted successfully!';
-            }
+        // Get menu info
+        $menuStmt = $pdo->prepare("SELECT * FROM menu_items WHERE id = ?");
+        $menuStmt->execute([$editId]);
+        $menuToDelete = $menuStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($menuToDelete) {
+            $pdo->prepare("DELETE FROM menu_items WHERE id = ?")->execute([$editId]);
+            $auth->logAction('delete_menu', 'menu_items', $editId, $menuToDelete);
+            $_SESSION['success_message'] = 'Menu item deleted successfully!';
         }
         header('Location: menus.php');
         exit;
@@ -147,17 +139,14 @@ $parentMenus = [];
 try {
     $stmt = $pdo->query("
         SELECT m.*, 
-               pm.menu_name as parent_name,
                (SELECT COUNT(*) FROM business_menu_config WHERE menu_id = m.id AND is_enabled = 1) as business_count
         FROM menu_items m
-        LEFT JOIN menu_items pm ON m.parent_id = pm.id
-        ORDER BY COALESCE(m.parent_id, m.id), m.menu_order
+        ORDER BY m.menu_order
     ");
     $menus = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
-    // Get parent menus (top level)
-    $parentMenus = $pdo->query("SELECT id, menu_name FROM menu_items WHERE parent_id IS NULL ORDER BY menu_order")->fetchAll(PDO::FETCH_ASSOC);
-} catch (Exception $e) {}
+} catch (Exception $e) {
+    error_log('Error loading menus: ' . $e->getMessage());
+}
 
 require_once __DIR__ . '/includes/header.php';
 ?>
@@ -209,11 +198,11 @@ require_once __DIR__ . '/includes/header.php';
                         
                         <div class="row">
                             <div class="col-md-6 mb-3">
-                                <label class="form-label">Menu Path/URL</label>
-                                <input type="text" class="form-control" name="menu_path"
+                                <label class="form-label">Menu URL</label>
+                                <input type="text" class="form-control" name="menu_url"
                                        placeholder="e.g., /modules/dashboard/index.php"
-                                       value="<?php echo htmlspecialchars($editMenu['menu_path'] ?? ''); ?>">
-                                <small class="text-muted">Path relative to root (leave empty for parent menus)</small>
+                                       value="<?php echo htmlspecialchars($editMenu['menu_url'] ?? ''); ?>">
+                                <small class="text-muted">Path relative to root (optional)</small>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Menu Order</label>
@@ -222,38 +211,23 @@ require_once __DIR__ . '/includes/header.php';
                             </div>
                         </div>
                         
-                        <div class="row">
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Parent Menu</label>
-                                <select class="form-select" name="parent_id">
-                                    <option value="">None (Top Level)</option>
-                                    <?php foreach ($parentMenus as $pm): ?>
-                                    <?php if (($editMenu['id'] ?? 0) != $pm['id']): ?>
-                                    <option value="<?php echo $pm['id']; ?>" <?php echo ($editMenu['parent_id'] ?? '') == $pm['id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($pm['menu_name']); ?>
-                                    </option>
-                                    <?php endif; ?>
-                                    <?php endforeach; ?>
-                                </select>
+                        <div class="mb-3">
+                            <label class="form-label">Icon</label>
+                            <div class="input-group">
+                                <span class="input-group-text" id="icon-preview">
+                                    <i class="<?php echo htmlspecialchars($editMenu['menu_icon'] ?? 'bi bi-circle'); ?>"></i>
+                                </span>
+                                <input type="text" class="form-control" name="menu_icon" id="menu_icon"
+                                       value="<?php echo htmlspecialchars($editMenu['menu_icon'] ?? 'bi bi-circle'); ?>"
+                                       placeholder="bi bi-house-door">
                             </div>
-                            <div class="col-md-6 mb-3">
-                                <label class="form-label">Icon</label>
-                                <div class="input-group">
-                                    <span class="input-group-text" id="icon-preview">
-                                        <i class="<?php echo htmlspecialchars($editMenu['menu_icon'] ?? 'bi bi-circle'); ?>"></i>
-                                    </span>
-                                    <input type="text" class="form-control" name="menu_icon" id="menu_icon"
-                                           value="<?php echo htmlspecialchars($editMenu['menu_icon'] ?? 'bi bi-circle'); ?>"
-                                           placeholder="bi bi-house-door">
-                                </div>
-                                <div class="mt-2">
-                                    <small class="text-muted">Common icons: </small>
-                                    <?php foreach (array_slice($commonIcons, 0, 10) as $icon): ?>
-                                    <button type="button" class="btn btn-sm btn-outline-secondary me-1 mb-1 icon-picker" data-icon="<?php echo $icon; ?>">
-                                        <i class="<?php echo $icon; ?>"></i>
-                                    </button>
-                                    <?php endforeach; ?>
-                                </div>
+                            <div class="mt-2">
+                                <small class="text-muted">Common icons: </small>
+                                <?php foreach (array_slice($commonIcons, 0, 10) as $icon): ?>
+                                <button type="button" class="btn btn-sm btn-outline-secondary me-1 mb-1 icon-picker" data-icon="<?php echo $icon; ?>">
+                                    <i class="<?php echo $icon; ?>"></i>
+                                </button>
+                                <?php endforeach; ?>
                             </div>
                         </div>
                         
@@ -303,7 +277,7 @@ require_once __DIR__ . '/includes/header.php';
                         <th style="width:50px">Order</th>
                         <th>Menu</th>
                         <th>Code</th>
-                        <th>Path</th>
+                        <th>URL</th>
                         <th>Businesses</th>
                         <th>Status</th>
                         <th>Actions</th>
@@ -322,17 +296,11 @@ require_once __DIR__ . '/includes/header.php';
                     <tr>
                         <td class="text-center text-muted"><?php echo $menu['menu_order']; ?></td>
                         <td>
-                            <?php if ($menu['parent_id']): ?>
-                            <span class="text-muted ms-3">↳</span>
-                            <?php endif; ?>
                             <i class="<?php echo htmlspecialchars($menu['menu_icon']); ?> me-2"></i>
                             <strong><?php echo htmlspecialchars($menu['menu_name']); ?></strong>
-                            <?php if ($menu['parent_name']): ?>
-                            <br><small class="text-muted ms-4">under <?php echo htmlspecialchars($menu['parent_name']); ?></small>
-                            <?php endif; ?>
                         </td>
                         <td><code><?php echo htmlspecialchars($menu['menu_code']); ?></code></td>
-                        <td class="text-muted small"><?php echo htmlspecialchars($menu['menu_path'] ?: '-'); ?></td>
+                        <td class="text-muted small"><?php echo htmlspecialchars($menu['menu_url'] ?: '-'); ?></td>
                         <td>
                             <span class="badge bg-info"><?php echo $menu['business_count']; ?> businesses</span>
                         </td>
@@ -344,12 +312,12 @@ require_once __DIR__ . '/includes/header.php';
                             <?php endif; ?>
                         </td>
                         <td>
-                            <a href="?action=edit&id=<?php echo $menu['id']; ?>" class="btn btn-sm btn-outline-primary" title="Edit">
-                                <i class="bi bi-pencil"></i>
+                            <a href="?action=edit&id=<?php echo $menu['id']; ?>" class="btn btn-sm btn-outline-primary px-2 py-1" title="Edit">
+                                <i class="bi bi-pencil" style="font-size:0.8rem;"></i>
                             </a>
                             <button onclick="confirmDelete('?action=delete&id=<?php echo $menu['id']; ?>', '<?php echo addslashes($menu['menu_name']); ?>')" 
-                                    class="btn btn-sm btn-outline-danger" title="Delete">
-                                <i class="bi bi-trash"></i>
+                                    class="btn btn-sm btn-outline-danger px-2 py-1" title="Delete">
+                                <i class="bi bi-trash" style="font-size:0.8rem;"></i>
                             </button>
                         </td>
                     </tr>
