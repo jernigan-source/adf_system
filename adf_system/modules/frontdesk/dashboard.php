@@ -75,14 +75,14 @@ try {
     $totalRoomsResult = $db->fetchOne("SELECT COUNT(*) as count FROM rooms");
     $stats['total_rooms'] = max(1, $totalRoomsResult['count'] ?? 0);
 
-    // Count occupied rooms - include both checked_in AND confirmed bookings for today
+    // Count occupied rooms - Only include checked_in bookings
+    // Fix: Allow early check-ins to count as occupied (removed strict check_in_date start check)
     $occupiedRoomsResult = $db->fetchOne("
         SELECT COUNT(DISTINCT b.room_id) as count 
         FROM bookings b
-        WHERE b.status IN ('checked_in', 'confirmed')
-        AND DATE(b.check_in_date) <= ?
+        WHERE b.status = 'checked_in'
         AND DATE(b.check_out_date) > ?
-    ", [$today, $today]);
+    ", [$today]);
     $stats['occupied_rooms'] = $occupiedRoomsResult['count'] ?? 0;
     $stats['available_rooms'] = max(0, $stats['total_rooms'] - $stats['occupied_rooms']);
     $stats['occupancy_rate'] = ($stats['total_rooms'] > 0) 
@@ -98,13 +98,18 @@ try {
     ", [$today]);
     $stats['revenue_today'] = $revenueResult['total'] ?? 0;
 
-    // 7. Expected Revenue (from today's check-outs & bookings)
+    // 7. Expected Revenue / Potential Revenue (Sum of final_price of all active guests)
+    // Fix: Use final_price instead of total_price (which might be 0)
+    // Fix: Count revenue from ALL active bookings, not just those checking out today
     $expectedResult = $db->fetchOne("
-        SELECT COALESCE(SUM(b.total_price), 0) as total
+        SELECT COALESCE(SUM(b.final_price), 0) as total
         FROM bookings b
         WHERE b.status IN ('checked_in', 'confirmed')
-        AND DATE(b.check_out_date) = ?
-    ", [$today]);
+        AND (
+            (DATE(b.check_in_date) <= ? AND DATE(b.check_out_date) > ?)
+            OR b.status = 'checked_in'
+        )
+    ", [$today, $today]);
     $stats['expected_revenue'] = $expectedResult['total'] ?? 0;
     
     // OTA Revenue Today - More robust check
@@ -121,10 +126,11 @@ try {
     $stats['ota_revenue_today'] = $otaRevenueResult['total'] ?? 0;
 
     // 8. Guest Data for Today
+    // Fix: Show ALL checked_in guests regardless of dates
     $guestsTodayResult = $db->fetchAll("
         SELECT 
             b.id,
-            b.guest_name,
+            g.guest_name,
             b.room_id,
             r.room_number,
             b.check_in_date,
@@ -132,12 +138,12 @@ try {
             b.status
         FROM bookings b
         JOIN rooms r ON b.room_id = r.id
+        LEFT JOIN guests g ON b.guest_id = g.id
         WHERE b.status = 'checked_in'
-        AND DATE(b.check_in_date) <= ?
-        AND DATE(b.check_out_date) > ?
         ORDER BY r.room_number ASC
-        LIMIT 10
-    ", [$today, $today]);
+        LIMIT 20
+    ");
+    $stats['guests_today'] = $guestsTodayResult;
     $stats['guests_today'] = $guestsTodayResult;
 
 } catch (Exception $e) {
@@ -1346,8 +1352,17 @@ include '../../includes/header.php';
                     (Total: <?php echo $stats['total_rooms']; ?> Rooms)
                 </span>
             </h3>
-            <div class="chart-container" style="height: 200px;">
+            <div class="chart-container" style="height: 220px; position: relative;">
                 <canvas id="occupancyChart"></canvas>
+                <!-- Center Text for 2028 Design -->
+                <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; z-index: 10;">
+                    <div style="font-size: 2.2rem; font-weight: 900; background: linear-gradient(135deg, #6366f1, #8b5cf6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; line-height: 1; letter-spacing: -1px; filter: drop-shadow(0 4px 12px rgba(99, 102, 241, 0.3));">
+                        <?php echo $stats['occupancy_rate']; ?>%
+                    </div>
+                    <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: 1px;">
+                        Occupied
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1618,7 +1633,7 @@ if (occupancyCtx) {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            cutout: '70%',
+            cutout: '75%',
             plugins: {
                 legend: {
                     position: 'bottom',

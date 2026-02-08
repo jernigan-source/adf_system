@@ -30,10 +30,33 @@ $today = date('Y-m-d');
 $message = '';
 $error = '';
 
+// ==================== VALIDATE USER ID ====================
+// Check if current user exists in database before using in FK constraints
+$validUserId = null;
+if (!empty($_SESSION['user_id'])) {
+    $userCheck = $db->fetchOne("SELECT id FROM users WHERE id = ?", [$_SESSION['user_id']]);
+    if ($userCheck) {
+        $validUserId = $_SESSION['user_id'];
+    } else {
+        // User doesn't exist - log the issue and continue gracefully
+        error_log("Warning: SessionUser ID {$_SESSION['user_id']} not found in users table for breakfast order");
+        // Try to find ANY admin/staff user to use as fallback
+        $adminUser = $db->fetchOne("SELECT id FROM users WHERE is_active = 1 ORDER BY id LIMIT 1");
+        if ($adminUser) {
+            $validUserId = $adminUser['id'];
+        }
+    }
+}
+
 // ==================== HANDLE BREAKFAST ORDER ====================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     try {
         if ($_POST['action'] === 'create_order') {
+            // Validate user exists
+            if (!$validUserId) {
+                throw new Exception("❌ Sistem error: User tidak ditemukan di database. Hubungi administrator.");
+            }
+            
             // Create breakfast_orders table if not exists
             $pdo->exec("CREATE TABLE IF NOT EXISTS breakfast_orders (
                 id INT PRIMARY KEY AUTO_INCREMENT,
@@ -56,34 +79,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 INDEX idx_status (order_status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             
+            // ===== VALIDATION =====
+            // Validate required fields
+            if (empty($_POST['guest_name'])) {
+                throw new Exception("Guest name is required");
+            }
+            if (empty($_POST['total_pax'])) {
+                throw new Exception("Total pax is required");
+            }
+            if (empty($_POST['breakfast_time'])) {
+                throw new Exception("Breakfast time is required");
+            }
+            if (empty($_POST['breakfast_date'])) {
+                throw new Exception("Breakfast date is required");
+            }
+            
+            // CRITICAL: Validate that at least ONE menu item is selected
+            if (empty($_POST['menu_items']) || !is_array($_POST['menu_items']) || count($_POST['menu_items']) === 0) {
+                throw new Exception("❌ Pilih minimal 1 menu item untuk breakfast order");
+            }
+            
             // Parse menu items from form
             $menuItems = [];
             $totalPrice = 0;
             
-            if (!empty($_POST['menu_items'])) {
-                foreach ($_POST['menu_items'] as $menuId) {
-                    $qty = (int)($_POST['menu_qty'][$menuId] ?? 1);
-                    if ($qty > 0) {
-                        // Get menu price
-                        $menuStmt = $pdo->prepare("SELECT menu_name, price, is_free FROM breakfast_menus WHERE id = ?");
-                        $menuStmt->execute([$menuId]);
-                        $menu = $menuStmt->fetch(PDO::FETCH_ASSOC);
+            foreach ($_POST['menu_items'] as $menuId) {
+                $qty = (int)($_POST['menu_qty'][$menuId] ?? 1);
+                if ($qty > 0) {
+                    // Get menu price
+                    $menuStmt = $pdo->prepare("SELECT menu_name, price, is_free FROM breakfast_menus WHERE id = ?");
+                    $menuStmt->execute([$menuId]);
+                    $menu = $menuStmt->fetch(PDO::FETCH_ASSOC);
+                    
+                    if ($menu) {
+                        $menuItems[] = [
+                            'menu_id' => $menuId,
+                            'menu_name' => $menu['menu_name'],
+                            'quantity' => $qty,
+                            'price' => $menu['price'],
+                            'is_free' => $menu['is_free']
+                        ];
                         
-                        if ($menu) {
-                            $menuItems[] = [
-                                'menu_id' => $menuId,
-                                'menu_name' => $menu['menu_name'],
-                                'quantity' => $qty,
-                                'price' => $menu['price'],
-                                'is_free' => $menu['is_free']
-                            ];
-                            
-                            if (!$menu['is_free']) {
-                                $totalPrice += ($menu['price'] * $qty);
-                            }
+                        if (!$menu['is_free']) {
+                            $totalPrice += ($menu['price'] * $qty);
                         }
                     }
                 }
+            }
+            
+            // Verify we have at least one valid menu item after processing
+            if (count($menuItems) === 0) {
+                throw new Exception("❌ No valid menu items selected");
             }
             
             // Insert order
@@ -92,28 +138,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                  menu_items, special_requests, total_price, created_by) 
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             
-            $stmt->execute([
-                !empty($_POST['booking_id']) ? $_POST['booking_id'] : null,
-                $_POST['guest_name'],
-                $_POST['room_number'] ?? null,
-                $_POST['total_pax'],
+            $orderId = $stmt->execute([
+                !empty($_POST['booking_id']) ? (int)$_POST['booking_id'] : null,
+                trim($_POST['guest_name']),
+                !empty($_POST['room_number']) ? trim($_POST['room_number']) : null,
+                (int)$_POST['total_pax'],
                 $_POST['breakfast_time'],
                 $_POST['breakfast_date'],
-                $_POST['location'],
+                $_POST['location'] ?? 'restaurant',
                 json_encode($menuItems),
-                $_POST['special_requests'] ?? null,
+                !empty($_POST['special_requests']) ? trim($_POST['special_requests']) : null,
                 $totalPrice,
-                $_SESSION['user_id']
+                $validUserId
             ]);
             
-            $message = "✓ Breakfast order created successfully!";
+            $lastOrderId = $pdo->lastInsertId();
             
-            // Reset form by redirecting
+            // Build detailed message
+            $itemscount = count($menuItems);
+            $guestName = trim($_POST['guest_name']);
+            $message = "✅ BERHASIL! Breakfast order untuk <strong>$guestName</strong> ($itemscount menu items) sudah tersimpan dengan ID #$lastOrderId";
+            
+            // Don't redirect - show success and keep form visible for more entries
             // header('Location: ' . $_SERVER['PHP_SELF']);
             // exit;
         }
     } catch (Exception $e) {
         $error = "❌ Error: " . $e->getMessage();
+        error_log("Breakfast Order Error: " . $e->getMessage());
     }
 }
 
@@ -506,17 +558,22 @@ include '../../includes/header.php';
             </p>
         </div>
         <div class="header-actions">
+            <a href="breakfast-orders.php" class="btn">📋 View Orders</a>
             <a href="dashboard.php" class="btn">🏠 Dashboard</a>
         </div>
     </div>
 
     <!-- Messages -->
     <?php if ($message): ?>
-    <div class="message success"><?php echo $message; ?></div>
+    <div class="message success" style="font-size: 1.1rem; padding: 1.5rem;">
+        <?php echo $message; ?>
+    </div>
     <?php endif; ?>
     
     <?php if ($error): ?>
-    <div class="message error"><?php echo $error; ?></div>
+    <div class="message error" style="font-size: 1.1rem; padding: 1.5rem;">
+        <?php echo $error; ?>
+    </div>
     <?php endif; ?>
 
     <!-- Order Form -->
@@ -666,6 +723,99 @@ include '../../includes/header.php';
         </form>
     </div>
 
+    <!-- TODAY'S BREAKFAST ORDERS SUMMARY -->
+    <div style="margin-top: 3rem;">
+        <h2 style="font-size: 1.5rem; font-weight: 900; margin-bottom: 1.5rem; color: rgba(255, 255, 255, 0.9);">
+            📊 Today's Breakfast Orders
+        </h2>
+        
+        <?php
+        try {
+            $todayOrders = [];
+            $stmt = $pdo->prepare("
+                SELECT bo.*, 
+                       b.booking_code,
+                       r.room_number
+                FROM breakfast_orders bo
+                LEFT JOIN bookings b ON bo.booking_id = b.id
+                LEFT JOIN rooms r ON b.room_id = r.id
+                WHERE bo.breakfast_date = ?
+                ORDER BY bo.breakfast_time ASC, r.room_number ASC
+            ");
+            $stmt->execute([$today]);
+            $todayOrders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            foreach ($todayOrders as &$order) {
+                $order['menu_items'] = json_decode($order['menu_items'], true) ?: [];
+            }
+        } catch (Exception $e) {
+            error_log("Today's orders query error: " . $e->getMessage());
+            $todayOrders = [];
+        }
+        ?>
+        
+        <?php if (count($todayOrders) > 0): ?>
+        <div style="background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; overflow: hidden;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead style="background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3));">
+                    <tr>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Waktu</th>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Guest & Room</th>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Menu Items</th>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Pax</th>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Total</th>
+                        <th style="padding: 1rem; text-align: left; font-weight: 700; color: rgba(255, 255, 255, 0.9); border-bottom: 1px solid rgba(255, 255, 255, 0.1);">Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($todayOrders as $order): ?>
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8); font-weight: 700;">
+                            🕐 <?php echo date('H:i', strtotime($order['breakfast_time'])); ?>
+                        </td>
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8);">
+                            <strong><?php echo htmlspecialchars($order['guest_name']); ?></strong>
+                            <?php if (!empty($order['room_number'])): ?>
+                            <br>
+                            <span style="display: inline-block; padding: 0.25rem 0.75rem; background: rgba(99, 102, 241, 0.3); border-radius: 6px; font-weight: 600; font-size: 0.9rem;">🛏️ <?php echo htmlspecialchars($order['room_number']); ?></span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8);">
+                            <?php foreach ($order['menu_items'] as $item): ?>
+                            <span style="display: inline-block; padding: 0.25rem 0.75rem; background: rgba(168, 85, 247, 0.2); border-radius: 6px; font-size: 0.85rem; color: rgba(255, 255, 255, 0.8); margin-bottom: 0.25rem; margin-right: 0.25rem;">
+                                <?php echo htmlspecialchars($item['menu_name']); ?>
+                                <?php if ($item['quantity'] > 1): ?> ×<?php echo $item['quantity']; ?><?php endif; ?>
+                            </span>
+                            <?php endforeach; ?>
+                        </td>
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8);">
+                            <?php echo (int)$order['total_pax']; ?>
+                        </td>
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8);">
+                            <?php if ($order['total_price'] > 0): ?>
+                            <strong>Rp <?php echo number_format($order['total_price'], 0, ',', '.'); ?></strong>
+                            <?php else: ?>
+                            <span style="color: rgba(255, 255, 255, 0.5);">Free</span>
+                            <?php endif; ?>
+                        </td>
+                        <td style="padding: 1rem; color: rgba(255, 255, 255, 0.8);">
+                            <span style="display: inline-block; padding: 0.5rem 1rem; background: rgba(249, 115, 22, 0.2); color: #fdba74; border-radius: 8px; font-weight: 600; font-size: 0.9rem;">
+                                ⏳ <?php echo ucfirst($order['order_status']); ?>
+                            </span>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php else: ?>
+        <div style="text-align: center; padding: 2rem; color: rgba(255, 255, 255, 0.5);">
+            <p style="font-size: 1.1rem;">📭 Belum ada breakfast order untuk hari ini</p>
+            <p style="margin-top: 0.5rem;">Pesanan yang dibuat akan muncul di sini</p>
+        </div>
+        <?php endif; ?>
+    </div>
+
 </div>
 
 <script>
@@ -690,6 +840,77 @@ function toggleQuantity(checkbox) {
         qtyDiv.style.display = 'none';
     }
 }
+
+/**
+ * CLEANER FORM VALIDATION
+ * Validate form before submission
+ */
+function validateBreakfastForm(e) {
+    const guestName = document.getElementById('guest_name').value.trim();
+    const totalPax = document.getElementById('total_pax').value.trim();
+    const breakfastTime = document.getElementById('breakfast_time').value.trim();
+    const breakfastDate = document.getElementById('breakfast_date').value.trim();
+    
+    // Validate required fields
+    if (!guestName) {
+        alert('❌ Guest name harus diisi!');
+        document.getElementById('guest_name').focus();
+        e.preventDefault();
+        return false;
+    }
+    
+    if (!totalPax || parseInt(totalPax) < 1) {
+        alert('❌ Total pax harus diisi (minimal 1)!');
+        document.getElementById('total_pax').focus();
+        e.preventDefault();
+        return false;
+    }
+    
+    if (!breakfastTime) {
+        alert('❌ Breakfast time harus diisi!');
+        document.getElementById('breakfast_time').focus();
+        e.preventDefault();
+        return false;
+    }
+    
+    if (!breakfastDate) {
+        alert('❌ Breakfast date harus diisi!');
+        document.getElementById('breakfast_date').focus();
+        e.preventDefault();
+        return false;
+    }
+    
+    // Check that at least one menu item is selected
+    const selectedMenus = document.querySelectorAll('input[name="menu_items[]"]:checked');
+    
+    if (selectedMenus.length === 0) {
+        alert('❌ PILIH MINIMAL 1 MENU ITEM!\n\nSelect menu dari "Complimentary Breakfast" atau "Extra Items"');
+        e.preventDefault();
+        return false;
+    }
+    
+    console.log('✅ Validation PASSED. ' + selectedMenus.length + ' menu items selected. Form akan di-submit...');
+    return true; // Allow form to submit
+}
+
+// Attach validation to form
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('breakfastOrderForm');
+    if (form) {
+        form.addEventListener('submit', validateBreakfastForm);
+        console.log('✅ breakfast form validation attached');
+    } else {
+        console.error('❌ Form dengan ID breakfastOrderForm tidak ditemukan!');
+    }
+});
+
+// Auto-scroll to error messages
+window.addEventListener('load', function() {
+    const errorMsg = document.querySelector('.message.error');
+    if (errorMsg) {
+        errorMsg.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+});
 </script>
 
 <?php include '../../includes/footer.php'; ?>

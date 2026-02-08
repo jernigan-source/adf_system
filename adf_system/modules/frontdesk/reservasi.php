@@ -557,6 +557,13 @@ include '../../includes/header.php';
                             <button class="action-btn" onclick="editBooking(<?php echo $booking['id']; ?>)">
                                 Edit
                             </button>
+                            
+                            <?php if ($booking['status'] === 'confirmed'): ?>
+                            <button class="action-btn action-checkin" style="background-color: #10b981; color: white; border-color: #059669;" onclick="checkinBooking(<?php echo $booking['id']; ?>, '<?php echo htmlspecialchars($booking['booking_code']); ?>')">
+                                Check-in
+                            </button>
+                            <?php endif; ?>
+
                             <?php if ($booking['status'] !== 'checked_in' && $booking['status'] !== 'checked_out'): ?>
                             <button class="action-btn action-cancel" onclick="cancelBooking(<?php echo $booking['id']; ?>, '<?php echo htmlspecialchars($booking['booking_code']); ?>')">
                                 Cancel
@@ -595,6 +602,35 @@ function viewBooking(id) {
 
 function editBooking(id) {
     window.location.href = 'edit-booking.php?id=' + id;
+}
+
+function checkinBooking(id, bookingCode) {
+    if (!confirm(`Konfirmasi Check-in untuk booking ${bookingCode}?\n\n- Status akan berubah menjadi CHECKED IN\n- Kamar akan ditandai TERISI`)) {
+        return;
+    }
+    
+    fetch('../../api/checkin-guest.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            booking_id: id
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert('Check-in BERHASIL! Tamu sudah masuk.');
+            location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    })
+    .catch(error => {
+        alert('Error: ' + error.message);
+        console.error('Error:', error);
+    });
 }
 
 function cancelBooking(id, bookingCode) {

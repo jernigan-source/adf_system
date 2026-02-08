@@ -1841,6 +1841,13 @@ body[data-theme="light"] .stats-card {
 </div>
 
 <script>
+// Initialize OTA Fees from PHP - Create global variable (not just window property)
+var OTA_FEES = <?php echo json_encode($otaFees); ?>;
+
+// Global variables for reservation form (used across multiple functions)
+var currentSource = '';
+var currentFees = OTA_FEES;
+
 window.viewBooking = function viewBooking(id, event) {
     event.preventDefault();
     event.stopPropagation();
@@ -1936,6 +1943,12 @@ function showBookingQuickView(booking) {
              paymentBadge = '<span style="background: #10b981; color: white; padding: 0.25rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700;">LUNAS (By ' + source + ')</span>';
          }
     }
+
+    // Action Buttons
+    let actionButtons = '';
+    
+    // Check-in / Check-out Logic
+    if (booking.status === 'checked_in') {
         actionButtons += '<button type="button" class="qv-btn" onclick="quickViewCheckOut()" style="background:#ef4444; color:white; border:none;">Check-out</button>';
     } else if (booking.status === 'confirmed' || booking.status === 'pending') {
         actionButtons += '<button type="button" class="qv-btn qv-checkin-btn" onclick="quickViewCheckIn()">Check-in</button>';
@@ -2027,26 +2040,16 @@ function showBookingQuickView(booking) {
     
     console.log('✅ Content populated');
     
-    // Add active class FIRST to ensure CSS applies
+    // Add active class to trigger CSS display: flex !important
     modal.classList.add('active');
-    console.log('✅ Active class added');
+    console.log('✅ Active class added - modal should be visible now');
     
-    // Then set inline styles as fallback
-    modal.style.display = 'flex';
-    modal.style.position = 'fixed';
-    modal.style.zIndex = '99999';
-    modal.style.top = '0';
-    modal.style.left = '0';
-    modal.style.right = '0';
-    modal.style.bottom = '0';
-    modal.style.alignItems = 'center';
-    modal.style.justifyContent = 'center';
-    
-    console.log('✅ Modal should be visible now!', {
-        display: modal.style.display,
-        position: modal.style.position,
-        zIndex: modal.style.zIndex,
-        hasActiveClass: modal.classList.contains('active')
+    // Log for debugging
+    console.log({
+        modalId: modal.id,
+        hasActiveClass: modal.classList.contains('active'),
+        computedDisplay: window.getComputedStyle(modal).display,
+        zIndex: window.getComputedStyle(modal).zIndex
     });
 }
 
@@ -2606,11 +2609,11 @@ window.updateSourceDetails = function() {
     const sourceSelect = document.getElementById('bookingSource');
     const feeDisplay = document.getElementById('otaFeeDisplay');
     const feeRow = document.getElementById('feeRow');
-    const source = sourceSelect ? sourceSelect.value : '';
+    currentSource = sourceSelect ? sourceSelect.value : '';
     
     // Default Fees Map (Fallback)
     // Matches the values in the HTML optgroup
-    const fees = (typeof OTA_FEES !== 'undefined') ? OTA_FEES : {
+    currentFees = (typeof OTA_FEES !== 'undefined') ? OTA_FEES : {
         'agoda': 15, 
         'booking': 12, 
         'tiket': 10, 
@@ -2619,13 +2622,13 @@ window.updateSourceDetails = function() {
         'ota': 10
     };
     
-    let feePercent = fees[source] || 0;
+    let feePercent = currentFees[currentSource] || 0;
     
     // AUTO-SELECT PAYMENT METHOD LOGIC
     const pmOtaBtn = document.getElementById('pm-ota'); // The new hidden OTA button
     const otaSources = ['agoda', 'booking', 'tiket', 'traveloka', 'airbnb', 'ota'];
     
-    if (otaSources.includes(source)) {
+    if (otaSources.includes(currentSource)) {
         // Source is an OTA
         if (pmOtaBtn) {
             pmOtaBtn.style.display = 'flex'; // Show the button
@@ -2672,6 +2675,10 @@ window.calculateFinalPrice = function() {
     const total = (nights * price) - discount;
     const final = total > 0 ? total : 0;
     
+    // Update both total_price and final_price hidden fields
+    const totalPriceEl = document.getElementById('hiddenTotalPrice');
+    if(totalPriceEl) totalPriceEl.value = (nights * price);
+    
     const finalEl = document.getElementById('finalPriceDisplay');
     if(finalEl) finalEl.innerText = 'Rp ' + final.toLocaleString('id-ID');
     
@@ -2684,20 +2691,20 @@ window.calculateFinalPrice = function() {
     const paymentMethodInput = document.getElementById('paymentMethod');
     const paidAmountInput = document.getElementById('paidAmount');
     
-    if (fees[source] && fees[source] > 0) {
+    if (currentFees[currentSource] && currentFees[currentSource] > 0) {
         if(feeRow) feeRow.style.display = 'flex';
         // Auto select OTA payment for OTA sources
         if(pmOta) {
             pmOta.style.display = 'flex';
             // Trigger click to activate
-            if (source !== 'walk_in' && source !== 'phone') {
+            if (currentSource !== 'walk_in' && currentSource !== 'phone') {
                 pmOta.click();
             }
         }
         
         // Auto-fill paid amount with final price for OTA (Assume prepaid to OTA)
         // Check if it IS an OTA source (logic: has a fee defined usually implies OTA here)
-        if (['agoda', 'booking', 'tiket', 'traveloka', 'airbnb', 'ota'].includes(source)) {
+        if (['agoda', 'booking', 'tiket', 'traveloka', 'airbnb', 'ota'].includes(currentSource)) {
              if (paidAmountInput) paidAmountInput.value = final;
              
              // Update payment status dropdown logic locally if function exists
@@ -2716,7 +2723,7 @@ window.calculateFinalPrice = function() {
         if(feeInfo) feeInfo.style.display = 'none';
         
         // Revert to cash if OTA was selected but source changed to non-OTA
-        if (paymentMethodInput.value === 'ota') {
+        if (paymentMethodInput && paymentMethodInput.value === 'ota') {
             const cashBtn = document.querySelector('.pm-item[onclick*="cash"]');
             if (cashBtn) cashBtn.click();
         }
@@ -2746,12 +2753,20 @@ window.submitReservation = function(event) {
     submitBtn.disabled = true;
     submitBtn.innerText = 'Saving...';
     
-    fetch('<?php echo BASE_URL; ?>/api/create-reservation.php', {
+    const apiUrl = '<?php echo BASE_URL; ?>/api/create-reservation.php';
+    console.log('Submitting to:', apiUrl);
+    console.log('Form data:', Object.fromEntries(formData));
+    
+    fetch(apiUrl, {
         method: 'POST',
         body: formData
     })
-    .then(response => response.json())
+    .then(response => {
+        console.log('Response status:', response.status);
+        return response.json();
+    })
     .then(data => {
+        console.log('API Response:', data);
         if(data.success || data.status === 'success') {
             closeReservationModal();
             location.reload(); 
@@ -2762,8 +2777,8 @@ window.submitReservation = function(event) {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
-        alert('Failed to connect to server.');
+        console.error('Fetch Error:', error);
+        alert('Connection error: ' + error.message);
         submitBtn.disabled = false;
         submitBtn.innerText = originalText;
     });
@@ -3264,137 +3279,343 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <!-- RESERVATION MODAL - POPUP SYSTEM 2028 -->
 <div id="reservationModal" class="modal-overlay">
-    <div class="modal-content modal-content-large glass-panel">
+    <div class="modal-content modal-compact">
         <button class="modal-close" onclick="closeReservationModal()">×</button>
         
-        <div class="modal-header">
-            <h2 class="gradient-text">New Reservation</h2>
-            <p>Create new booking entry</p>
+        <div class="modal-header-compact">
+            <h2>New Reservation</h2>
         </div>
         
         <form id="reservationForm" onsubmit="submitReservation(event)">
             <input type="hidden" name="action" value="create_reservation">
             <input type="hidden" id="totalNights" name="total_nights" value="1">
+            <input type="hidden" id="hiddenTotalPrice" name="total_price" value="0">
             <input type="hidden" id="hiddenFinalPrice" name="final_price" value="0">
             
-            <div class="form-grid-2028">
-                <!-- LEFT COLUMN -->
-                <div class="form-col">
-                    <div class="form-section-modern">
-                        <h3><i class="icon-user"></i> Guest Info</h3>
-                        <div class="input-group-modern">
-                            <label>Guest Name</label>
-                            <input type="text" id="guestName" name="guest_name" required placeholder="Full Name">
-                        </div>
-                        <div class="input-group-modern">
-                            <label>Contact</label>
-                            <input type="text" id="guestPhone" name="guest_phone" placeholder="Phone / WhatsApp">
-                        </div>
+            <div class="form-compact">
+                <!-- GUEST INFO -->
+                <div class="form-row-2col">
+                    <div class="input-compact">
+                        <label>Guest Name*</label>
+                        <input type="text" id="guestName" name="guest_name" required placeholder="Full name">
                     </div>
+                    <div class="input-compact">
+                        <label>Phone</label>
+                        <input type="text" id="guestPhone" name="guest_phone" placeholder="Phone/WA">
+                    </div>
+                </div>
 
-                    <div class="form-section-modern">
-                        <h3><i class="icon-calendar"></i> Stay Details</h3>
-                        <div class="date-range-modern">
-                            <div class="input-group-modern">
-                                <label>Check In</label>
-                                <input type="date" id="checkInDate" name="check_in_date" required onchange="updateStayDetails()">
-                            </div>
-                            <div class="input-group-modern">
-                                <label>Check Out</label>
-                                <input type="date" id="checkOutDate" name="check_out_date" required onchange="updateStayDetails()">
-                            </div>
-                        </div>
-                        <div class="input-group-modern">
-                            <label>Room Selection</label>
-                            <select id="roomSelect" name="room_id" required onchange="updateRoomPrice()">
-                                <option value="">Select Room...</option>
-                                <?php foreach ($rooms as $r): ?>
-                                    <option value="<?php echo $r['id']; ?>" data-price="<?php echo $r['base_price']; ?>">
-                                        <?php echo $r['room_number']; ?> - <?php echo $r['type_name']; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                         <div class="pax-control-modern">
-                            <label>Guests</label>
-                            <div class="pax-inputs">
-                                <input type="number" id="adultCount" name="adult_count" value="1" min="1" placeholder="Adult">
-                                <span>Adl</span>
-                                <input type="number" id="childrenCount" name="children_count" value="0" min="0" placeholder="Child">
-                                <span>Chd</span>
-                            </div>
+                <!-- DATES -->
+                <div class="form-row-2col">
+                    <div class="input-compact">
+                        <label>Check In*</label>
+                        <input type="date" id="checkInDate" name="check_in_date" required onchange="updateStayDetails()">
+                    </div>
+                    <div class="input-compact">
+                        <label>Check Out*</label>
+                        <input type="date" id="checkOutDate" name="check_out_date" required onchange="updateStayDetails()">
+                    </div>
+                </div>
+
+                <!-- ROOM & GUESTS -->
+                <div class="form-row-2col">
+                    <div class="input-compact">
+                        <label>Room*</label>
+                        <select id="roomSelect" name="room_id" required onchange="updateRoomPrice()">
+                            <option value="">Select...</option>
+                            <?php foreach ($rooms as $r): ?>
+                                <option value="<?php echo $r['id']; ?>" data-price="<?php echo $r['base_price']; ?>">
+                                    Room <?php echo $r['room_number']; ?> - <?php echo $r['type_name']; ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="input-compact">
+                        <label>Guests</label>
+                        <div class="guest-inputs">
+                            <input type="number" id="adultCount" name="adult_count" value="1" min="1" style="flex:1;">
+                            <span style="font-size:0.75rem; color:#888; padding:0 4px;">adult</span>
                         </div>
                     </div>
                 </div>
 
-                <!-- RIGHT COLUMN -->
-                <div class="form-col">
-                    <div class="form-section-modern">
-                        <h3><i class="icon-tag"></i> Booking Source</h3>
-                        <div class="input-group-modern">
-                            <select id="bookingSource" name="booking_source" onchange="updateSourceDetails()">
-                                <option value="walk_in">Direct Booking (Walk-in)</option>
-                                <option value="phone">Direct Booking (Phone)</option>
-                                <option value="online">Direct Booking (Website)</option>
-                                <optgroup label="Online Travel Agents (OTA)">
-                                    <option value="agoda">Agoda</option>
-                                    <option value="booking">Booking.com</option>
-                                    <option value="tiket">Tiket.com</option>
-                                    <option value="traveloka">Traveloka</option>
-                                    <option value="airbnb">Airbnb</option>
-                                    <option value="ota">Other OTA</option>
-                                </optgroup>
-                            </select>
-                        </div>
-                        <div id="otaFeeDisplay" class="fee-badge" style="display:none;">
-                            OTA Fee: <span id="otaFeePercent">0</span>%
-                        </div>
+                <!-- SOURCE & PAYMENT METHOD -->
+                <div class="form-row-2col">
+                    <div class="input-compact">
+                        <label>Booking Source</label>
+                        <select id="bookingSource" name="booking_source" onchange="updateSourceDetails()">
+                            <option value="walk_in">Direct (Walk-in)</option>
+                            <option value="phone">Direct (Phone)</option>
+                            <option value="agoda">Agoda</option>
+                            <option value="booking">Booking.com</option>
+                            <option value="tiket">Tiket.com</option>
+                        </select>
                     </div>
+                    <div class="input-compact">
+                        <label>Payment Method</label>
+                        <select name="payment_method" id="paymentMethod" onchange="calculateFinalPrice()">
+                            <option value="cash">Cash</option>
+                            <option value="transfer">Transfer</option>
+                            <option value="qris">QRIS</option>
+                            <option value="ota">OTA</option>
+                        </select>
+                    </div>
+                </div>
 
-                    <div class="form-section-modern price-card-2028">
-                        <h3><i class="icon-wallet"></i> Payment & Price</h3>
-                        
-                        <div class="price-breakdown">
-                            <div class="price-row">
-                                <span>Room Price</span>
-                                <input type="number" id="roomPrice" name="room_price" readonly>
-                            </div>
-                            <div class="price-row">
-                                <span>Nights</span>
-                                <span id="displayNights">1</span>
-                            </div>
-                            <div class="price-row discount-row">
-                                <span>Discount</span>
-                                <input type="number" id="discount" name="discount" value="0" onchange="calculateFinalPrice()">
-                            </div>
-                             <div class="price-row fee-row" id="feeRow" style="display:none; color: #f43f5e;">
-                                <span>OTA Fee</span>
-                                <span id="feeAmountDisplay">- Rp 0</span>
-                            </div>
-                        </div>
+                <!-- PRICE SUMMARY -->
+                <div class="price-summary-compact">
+                    <div class="price-line">
+                        <span>Room Price (Rp):</span>
+                        <input type="number" id="roomPrice" name="room_price" readonly style="text-align:right;">
+                    </div>
+                    <div class="price-line">
+                        <span>Nights:</span>
+                        <span id="displayNights" style="font-weight:bold;">1</span>
+                    </div>
+                    <div class="price-line">
+                        <span>Discount (Rp):</span>
+                        <input type="number" id="discount" name="discount" value="0" onchange="calculateFinalPrice()" style="text-align:right;">
+                    </div>
+                    <div class="price-line-total">
+                        <span>TOTAL:</span>
+                        <strong id="finalPriceDisplay" style="color:#10b981;">Rp 0</strong>
+                    </div>
+                </div>
 
-                        <div class="total-display">
-                            <span>GRAND TOTAL</span>
-                            <strong id="finalPriceDisplay">Rp 0</strong>
-                        </div>
+                <!-- PAYMENT -->
+                <div class="input-compact">
+                    <label>Initial Payment (DP) - Rp</label>
+                    <input type="number" id="paidAmount" name="paid_amount" value="0" placeholder="0">
+                </div>
+            </div>
 
-                        <div class="input-group-modern mt-3">
-                            <label>Initial Payment (DP)</label>
-                            <input type="number" id="paidAmount" name="paid_amount" value="0" placeholder="Rp 0">
-                            <input type="hidden" id="hiddenFinalPrice" name="final_price">
-                        </div>
+            <div class="modal-footer-compact">
+                <button type="button" class="btn-cancel" onclick="closeReservationModal()">Cancel</button>
+                <button type="submit" class="btn-save">Save Reservation</button>
+            </div>
+        </form>
+    </div>
+</div>
 
-                        <div class="payment-methods-grid">
-                            <input type="hidden" name="payment_method" id="paymentMethod" value="cash">
-                            <div class="pm-item active" onclick="setPaymentMethod('cash', this)">
-                                <span class="pm-icon">💵</span>
-                                <span class="pm-name">Cash</span>
-                            </div>
-                            <div class="pm-item" onclick="setPaymentMethod('transfer', this)">
-                                <span class="pm-icon">🏦</span>
-                                <span class="pm-name">Transfer</span>
-                            </div>
-                            <div class="pm-item" onclick="setPaymentMethod('qris', this)">
+<style>
+/* COMPACT RESERVATION MODAL STYLES */
+.modal-compact {
+    width: 90%;
+    max-width: 600px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    padding: 0;
+    overflow: hidden;
+}
+
+body[data-theme="dark"] .modal-compact {
+    background: #1e293b;
+}
+
+.modal-header-compact {
+    padding: 1rem 1.5rem;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white;
+    border-bottom: none;
+}
+
+.modal-header-compact h2 {
+    margin: 0;
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.form-compact {
+    padding: 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.form-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.input-compact {
+    display: flex;
+    flex-direction: column;
+}
+
+.input-compact label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: #475569;
+}
+
+body[data-theme="dark"] .input-compact label {
+    color: #cbd5e1;
+}
+
+.input-compact input,
+.input-compact select {
+    padding: 0.5rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-family: inherit;
+}
+
+body[data-theme="dark"] .input-compact input,
+body[data-theme="dark"] .input-compact select {
+    background: #334155;
+    border-color: #475569;
+    color: white;
+}
+
+.input-compact input:focus,
+.input-compact select:focus {
+    outline: none;
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+}
+
+.guest-inputs {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.guest-inputs input {
+    padding: 0.4rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.price-summary-compact {
+    background: #f1f5f9;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+
+body[data-theme="dark"] .price-summary-compact {
+    background: #334155;
+}
+
+.price-line {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    align-items: center;
+}
+
+.price-line input {
+    width: 150px;
+    padding: 0.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    text-align: right;
+}
+
+body[data-theme="dark"] .price-line input {
+    background: #1e293b;
+    border-color: #475569;
+    color: white;
+}
+
+.price-line-total {
+    display: flex;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 1rem;
+    padding-top: 0.5rem;
+    border-top: 2px solid #cbd5e1;
+}
+
+body[data-theme="dark"] .price-line-total {
+    border-color: #475569;
+}
+
+.modal-footer-compact {
+    padding: 1rem 1.5rem;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end;
+}
+
+body[data-theme="dark"] .modal-footer-compact {
+    background: #0f172a;
+    border-color: #334155;
+}
+
+.btn-cancel {
+    padding: 0.6rem 1.5rem;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+body[data-theme="dark"] .btn-cancel {
+    background: #334155;
+    border-color: #475569;
+    color: white;
+}
+
+.btn-cancel:hover {
+    background: #f1f5f9;
+}
+
+.btn-save {
+    padding: 0.6rem 2rem;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 0.9rem;
+    transition: all 0.3s;
+}
+
+.btn-save:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 20px rgba(99,102,241,0.3);
+}
+
+.btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Scrollbar styling */
+.form-compact::-webkit-scrollbar {
+    width: 6px;
+}
+
+.form-compact::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.form-compact::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 3px;
+}
+
+.form-compact::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+</style>
                                 <span class="pm-icon">📱</span>
                                 <span class="pm-name">QRIS</span>
                             </div>

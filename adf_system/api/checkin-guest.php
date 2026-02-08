@@ -35,7 +35,33 @@ if (!$auth->hasPermission('frontdesk')) {
 $db = Database::getInstance();
 $currentUser = $auth->getCurrentUser();
 
+// Validate user exists in database - with fallback
+$validUserId = null;
+if ($currentUser && !empty($currentUser['id'])) {
+    $userExists = $db->fetchOne("SELECT id FROM users WHERE id = ?", [$currentUser['id']]);
+    if ($userExists) {
+        $validUserId = $currentUser['id'];
+    }
+}
+
+// If current user not found, fallback to first active admin user
+if (!$validUserId) {
+    $fallbackUser = $db->fetchOne("SELECT id FROM users WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
+    if ($fallbackUser) {
+        $validUserId = $fallbackUser['id'];
+        error_log("Check-in: Current user invalid, using fallback user ID " . $validUserId);
+    }
+}
+
 try {
+    // Handle JSON input if $_POST is empty
+    if (empty($_POST)) {
+        $jsonInput = json_decode(file_get_contents('php://input'), true);
+        if (json_last_error() === JSON_ERROR_NONE && !empty($jsonInput)) {
+            $_POST = $jsonInput;
+        }
+    }
+
     // Get booking ID from request
     $bookingId = $_POST['booking_id'] ?? null;
     
@@ -73,23 +99,57 @@ try {
     $totalPaid = max((float)$payment['paid'], (float)$booking['paid_amount']);
     $remaining = max(0, (float)$booking['final_price'] - $totalPaid);
 
-    if ($remaining > 0 && !$createInvoice) {
-        throw new Exception('Pembayaran belum lunas. Silakan bayar atau buat invoice sisa.');
-    }
+    // ==========================================
+    // NEW LOGIC: OTA vs Direct Booking Check-in
+    // ==========================================
+    $otaSources = ['agoda', 'booking', 'tiket', 'airbnb', 'ota', 'traveloka', 'pegipegi', 'expedia'];
+    $isOTA = in_array(strtolower($booking['booking_source']), $otaSources);
 
     // Start transaction
     $db->beginTransaction();
 
+    if ($isOTA) {
+        // LOGIC 1: OTA Booking -> Auto-settle payment (LUNAS)
+        if ($remaining > 0) {
+            // Add automated payment record for OTA
+            $db->insert('booking_payments', [
+                'booking_id' => $bookingId,
+                'amount' => $remaining,
+                'payment_date' => date('Y-m-d H:i:s'),
+                'payment_method' => 'ota', // Assume payment via OTA
+                'notes' => 'Auto-payment upon check-in (OTA Source: ' . $booking['booking_source'] . ')',
+                'processed_by' => $validUserId  // Can be NULL if user not found
+            ]);
+        }
+    } else {
+        // LOGIC 2: Direct Booking -> Allow check-in but create invoice for debt
+        if ($remaining > 0) {
+            // Force create invoice for the remaining amount
+            $createInvoice = true; 
+        }
+    }
+
+    // Original Payment Check (Now effectively bypassed by above logic)
+    if ($remaining > 0 && !$createInvoice) {
+        throw new Exception('Pembayaran belum lunas. Silakan bayar atau buat invoice sisa.');
+    }
+
     // Create invoice for remaining balance if required
     $invoiceNumber = null;
     if ($remaining > 0 && $createInvoice) {
-        $division = $db->fetchOne("SELECT id FROM divisions WHERE is_active = 1 AND division_name = 'Room Sell' LIMIT 1");
+        // Priority 1: Exact match for 'Hotel' or 'Front Desk'
+        $division = $db->fetchOne("SELECT id FROM divisions WHERE is_active = 1 AND (division_name = 'Hotel' OR division_name = 'Front Desk' OR division_name = 'Room Sell') LIMIT 1");
+        
+        // Priority 2: Contains 'Hotel' or 'Front'
         if (!$division) {
-            $division = $db->fetchOne("SELECT id FROM divisions WHERE is_active = 1 AND (division_name LIKE '%Front Desk%' OR division_name LIKE '%Frontdesk%' OR division_code LIKE '%-FD') ORDER BY id ASC LIMIT 1");
+            $division = $db->fetchOne("SELECT id FROM divisions WHERE is_active = 1 AND (division_name LIKE '%Hotel%' OR division_name LIKE '%Front%') ORDER BY id ASC LIMIT 1");
         }
+        
+        // Priority 3: Fallback to any division
         if (!$division) {
             $division = $db->fetchOne("SELECT id FROM divisions WHERE is_active = 1 ORDER BY id ASC LIMIT 1");
         }
+        
         if (!$division) {
             throw new Exception('Divisi tidak ditemukan untuk invoice');
         }
@@ -119,7 +179,7 @@ try {
             'total_amount' => $remaining,
             'paid_amount' => 0,
             'notes' => 'Auto invoice from check-in. Booking #' . $booking['booking_code'],
-            'created_by' => $currentUser['id']
+            'created_by' => $validUserId
         ]);
 
         $db->insert('sales_invoices_detail', [
@@ -142,7 +202,7 @@ try {
             checked_in_by = ?,
             updated_at = NOW()
         WHERE id = ?
-    ", [$currentUser['id'], $bookingId]);
+    ", [$validUserId, $bookingId]);
     
     // Update room status to occupied
     $db->query("
@@ -154,14 +214,16 @@ try {
     ", [$booking['guest_id'], $booking['room_id']]);
     
     // Log activity
-    $db->query("
-        INSERT INTO activity_logs (user_id, action, description, created_at)
-        VALUES (?, ?, ?, NOW())
-    ", [
-        $currentUser['id'],
-        'check_in',
-        "Check-in guest: {$booking['guest_name']} - Room {$booking['room_number']} - Booking #{$booking['booking_code']}"
-    ]);
+    if ($validUserId) {
+        $db->query("
+            INSERT INTO activity_logs (user_id, action, description, created_at)
+            VALUES (?, ?, ?, NOW())
+        ", [
+            $validUserId,
+            'check_in',
+            "Check-in guest: {$booking['guest_name']} - Room {$booking['room_number']} - Booking #{$booking['booking_code']}"
+        ]);
+    }
     
     $db->commit();
     
