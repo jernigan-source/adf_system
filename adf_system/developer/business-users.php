@@ -116,12 +116,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $businessPdo) {
                             ");
                             $stmt->execute([$username, $hashedPassword, $fullName, $email, $phone, $role, $businessAccess, $isActive]);
                             
+                            // 3. CREATE PERMISSION ENTRIES in MASTER database
+                            // Get all menus enabled for this business
+                            $menuStmt = $masterPdo->prepare("
+                                SELECT m.id FROM menu_items m
+                                JOIN business_menu_config bmc ON m.id = bmc.menu_id
+                                WHERE bmc.business_id = ? AND bmc.is_enabled = 1
+                            ");
+                            $menuStmt->execute([$selectedBusinessId]);
+                            $menus = $menuStmt->fetchAll(PDO::FETCH_ASSOC);
+                            
+                            // Insert permission for each menu (only for THIS business)
+                            $permStmt = $masterPdo->prepare("
+                                INSERT INTO user_menu_permissions (user_id, business_id, menu_id, can_view, can_create, can_edit, can_delete)
+                                VALUES (?, ?, ?, 1, 1, 1, 1)
+                            ");
+                            
+                            foreach ($menus as $menu) {
+                                try {
+                                    $permStmt->execute([$masterUserId, $selectedBusinessId, $menu['id']]);
+                                } catch (Exception $e) {
+                                    // Skip if menu already exists for user
+                                }
+                            }
+                            
+                            // 4. Also create assignment in user_business_assignment table
+                            try {
+                                $assignStmt = $masterPdo->prepare("
+                                    INSERT IGNORE INTO user_business_assignment (user_id, business_id, assigned_at)
+                                    VALUES (?, ?, NOW())
+                                ");
+                                $assignStmt->execute([$masterUserId, $selectedBusinessId]);
+                            } catch (Exception $e) {}
+                            
                             $auth->logAction('create_business_user', 'users', $masterUserId, null, [
                                 'business' => $businessConfig['business_name'],
-                                'username' => $username
+                                'username' => $username,
+                                'menus_assigned' => count($menus)
                             ]);
                             
-                            $_SESSION['success_message'] = "User '{$username}' created successfully and can now login!";
+                            $_SESSION['success_message'] = "User '{$username}' created successfully with " . count($menus) . " menu permissions and can now login!";
                             header("Location: business-users.php?business_id={$selectedBusinessId}");
                             exit;
                         }
